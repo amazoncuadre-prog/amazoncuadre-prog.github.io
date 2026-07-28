@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reproductor Inteligente - Pantalla de Señalización</title>
+    <style>
+        /* Diseño base - Optimización para TV */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+            font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #ffffff;
+            /* Oculta el cursor en la pantalla para una experiencia limpia */
+            cursor: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Contenedor del video */
+        .video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            /* "cover" llena la pantalla completa recortando bordes. 
+               "contain" mantiene la proporción original mostrando bandas negras si no encaja. */
+            object-fit: cover;
+            border: none;
+            outline: none;
+        }
+
+        /* Pantalla de carga premium */
+        #loader {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #050505;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            transition: opacity 0.8s ease;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top-color: #3b82f6; /* Azul moderno */
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        .loader-text {
+            margin-top: 20px;
+            font-size: 16px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            color: #a3a3a3;
+            text-transform: uppercase;
+            animation: pulse 2s infinite ease-in-out;
+        }
+
+        /* Panel de Diagnóstico Oculto */
+        #debug-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.85); /* Slate 900 con transparencia */
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 12px;
+            font-size: 12px;
+            line-height: 1.6;
+            z-index: 100;
+            font-family: monospace;
+            max-width: 400px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            opacity: 0;
+            transform: translateY(20px);
+            pointer-events: none; /* No interfiere con clics cuando está oculto */
+        }
+
+        #debug-panel.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+            cursor: default;
+        }
+
+        #debug-panel h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #3b82f6;
+            font-size: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            padding-bottom: 6px;
+        }
+
+        .debug-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+
+        .debug-label {
+            color: #94a3b8;
+            margin-right: 15px;
+        }
+
+        .debug-value {
+            color: #f1f5f9;
+            font-weight: bold;
+            text-align: right;
+            word-break: break-all;
+        }
+
+        .status-ok {
+            color: #10b981; /* Verde */
+        }
+
+        .status-error {
+            color: #ef4444; /* Rojo */
+        }
+
+        /* Animaciones */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* Ajustes para interactuar temporalmente si es necesario */
+        .interactive-mode {
+            cursor: auto !important;
+        }
+    </style>
+    <!-- Importar fuentes elegantes de Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- Pantalla de Carga -->
+    <div id="loader">
+        <div class="spinner"></div>
+        <div class="loader-text" id="loader-msg">Inicializando Pantalla</div>
+    </div>
+
+    <!-- Contenedor del Reproductor de Video -->
+    <div class="video-container">
+        <!-- 
+          loop: Reproducción en bucle.
+          muted: Necesario para asegurar el autoplay sin interacción en la mayoría de Smart TVs.
+          playsinline: Evita pantalla completa nativa en iOS/Safari.
+          autoplay: Intenta iniciar la reproducción al cargar.
+        -->
+        <video id="player" loop muted playsinline autoplay></video>
+    </div>
+
+    <!-- Panel de Diagnóstico Técnico (Oculto por defecto, se activa con tecla 'D' o 5 taps) -->
+    <div id="debug-panel">
+        <h3>Diagnóstico del Sistema</h3>
+        <div class="debug-row">
+            <span class="debug-label">Estado de Red:</span>
+            <span class="debug-value" id="net-status">Detectando...</span>
+        </div>
+        <div class="debug-row">
+            <span class="debug-label">Último Chequeo:</span>
+            <span class="debug-value" id="last-check">-</span>
+        </div>
+        <div class="debug-row">
+            <span class="debug-label">Intervalo de Polling:</span>
+            <span class="debug-value" id="poll-interval">-</span>
+        </div>
+        <div class="debug-row">
+            <span class="debug-label">URL del Video Activo:</span>
+            <span class="debug-value" id="current-url">-</span>
+        </div>
+        <div class="debug-row">
+            <span class="debug-label">Estado de Video:</span>
+            <span class="debug-value" id="video-state">Detenido</span>
+        </div>
+        <div class="debug-row">
+            <span class="debug-label">Errores Detectados:</span>
+            <span class="debug-value" id="error-count">0</span>
+        </div>
+        <div style="margin-top: 10px; font-size: 10px; color: #64748b; text-align: center;">
+            Presiona 'D' o haz clic 5 veces para cerrar
+        </div>
+    </div>
+
+    <script>
+        // Variables globales
+        const videoElement = document.getElementById('player');
+        const loaderElement = document.getElementById('loader');
+        const loaderMsg = document.getElementById('loader-msg');
+        const debugPanel = document.getElementById('debug-panel');
+        
+        // Elementos del panel de diagnóstico
+        const uiNetStatus = document.getElementById('net-status');
+        const uiLastCheck = document.getElementById('last-check');
+        const uiPollInterval = document.getElementById('poll-interval');
+        const uiCurrentUrl = document.getElementById('current-url');
+        const uiVideoState = document.getElementById('video-state');
+        const uiErrorCount = document.getElementById('error-count');
+
+        let currentVideoUrl = "";
+        let pollingTimer = null;
+        let errors = 0;
+        let clickCount = 0;
+        let clickTimer = null;
+        let intervalSeconds = 60; // Por defecto
+
+        // Ocultar Loader de forma fluida
+        function hideLoader() {
+            if (loaderElement.style.opacity !== '0') {
+                loaderElement.style.opacity = '0';
+                setTimeout(() => {
+                    loaderElement.style.display = 'none';
+                }, 800);
+            }
+        }
+
+        // Mostrar Loader
+        function showLoader(message) {
+            loaderMsg.textContent = message || "Cargando...";
+            loaderElement.style.display = 'flex';
+            loaderElement.style.opacity = '1';
+        }
+
+        // Actualizar Panel de Diagnóstico
+        function updateDebugUI() {
+            uiNetStatus.innerHTML = navigator.onLine ? 
+                '<span class="status-ok">Conectado (En Línea)</span>' : 
+                '<span class="status-error">Desconectado (Sin Red)</span>';
+            uiLastCheck.textContent = new Date().toLocaleTimeString();
+            uiPollInterval.textContent = intervalSeconds + "s";
+            uiCurrentUrl.textContent = currentVideoUrl || "Ninguno";
+            uiErrorCount.textContent = errors;
+            
+            if (videoElement.paused) {
+                uiVideoState.textContent = "Pausado / Cargando";
+            } else {
+                uiVideoState.textContent = "Reproduciendo (Bucle)";
+            }
+        }
+
+        // Cargar y reproducir un video nuevo
+        function loadNewVideo(url) {
+            currentVideoUrl = url;
+            showLoader("Cargando Nuevo Video");
+            
+            // Cambiar fuente
+            videoElement.src = url;
+            videoElement.load();
+            
+            // Intentar reproducir
+            const playPromise = videoElement.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    // Reproducción exitosa
+                    hideLoader();
+                    updateDebugUI();
+                }).catch(error => {
+                    console.error("Error al iniciar autoplay:", error);
+                    errors++;
+                    
+                    // Si falla (por políticas de autoplay del navegador),
+                    // aseguramos que esté silenciado e intentamos reproducir de nuevo
+                    videoElement.muted = true;
+                    videoElement.play()
+                        .then(() => {
+                            hideLoader();
+                            updateDebugUI();
+                        })
+                        .catch(e => {
+                            loaderMsg.textContent = "Error al reproducir. Reintentando...";
+                            errors++;
+                            updateDebugUI();
+                        });
+                });
+            }
+        }
+
+        // Consultar el archivo config.json (Polling)
+        async function checkConfiguration() {
+            try {
+                // Añadimos parámetro dinámico de tiempo para evitar que el navegador devuelva el JSON en caché
+                const response = await fetch('config.json?nocache=' + Date.now(), {
+                    cache: 'no-store',
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Si la URL del video cambió
+                if (data.videoUrl && data.videoUrl !== currentVideoUrl) {
+                    console.log(`Nueva URL detectada: ${data.videoUrl}`);
+                    loadNewVideo(data.videoUrl);
+                }
+
+                // Ajustar intervalo dinámicamente si se modificó en el JSON
+                if (data.checkIntervalSeconds && data.checkIntervalSeconds !== intervalSeconds) {
+                    intervalSeconds = Math.max(5, data.checkIntervalSeconds); // Mínimo 5 segundos de seguridad
+                    console.log(`Intervalo de actualización cambiado a: ${intervalSeconds}s`);
+                    startPolling();
+                }
+
+                updateDebugUI();
+
+            } catch (error) {
+                console.error("Error consultando config.json:", error);
+                errors++;
+                updateDebugUI();
+                // No detenemos el flujo, en el próximo ciclo se reintentará
+            }
+        }
+
+        // Iniciar temporizador de sondeo
+        function startPolling() {
+            if (pollingTimer) {
+                clearInterval(pollingTimer);
+            }
+            
+            // Hacemos el chequeo inicial de inmediato
+            checkConfiguration();
+            
+            // Configuramos el bucle repetitivo
+            pollingTimer = setInterval(checkConfiguration, intervalSeconds * 1000);
+        }
+
+        // Inicialización
+        window.addEventListener('DOMContentLoaded', () => {
+            // Escuchar cambios de red nativos del navegador
+            window.addEventListener('online', updateDebugUI);
+            window.addEventListener('offline', updateDebugUI);
+
+            // Escuchar eventos del reproductor de video
+            videoElement.addEventListener('playing', () => {
+                hideLoader();
+                updateDebugUI();
+            });
+            
+            videoElement.addEventListener('waiting', () => {
+                // Si se queda haciendo buffering, mostramos spinner sutilmente
+                showLoader("Cargando buffer de video...");
+            });
+
+            videoElement.addEventListener('error', (e) => {
+                console.error("Error en elemento de video:", e);
+                errors++;
+                showLoader("Error de Video. Esperando cambio...");
+                updateDebugUI();
+            });
+
+            // Arrancar proceso
+            startPolling();
+        });
+
+        // --- Funciones del Panel de Diagnóstico ---
+
+        // Alternar visualización del panel
+        function toggleDebugPanel() {
+            const isActive = debugPanel.classList.toggle('active');
+            if (isActive) {
+                document.body.classList.add('interactive-mode');
+                updateDebugUI();
+            } else {
+                document.body.classList.remove('interactive-mode');
+            }
+        }
+
+        // Activar al presionar la tecla 'D'
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                toggleDebugPanel();
+            }
+        });
+
+        // Activar haciendo 5 clics/taps seguidos (útil para pantallas táctiles o TV remotos sin teclado)
+        window.addEventListener('click', () => {
+            clickCount++;
+            clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => {
+                clickCount = 0;
+            }, 2000); // Ventana de 2 segundos
+
+            if (clickCount >= 5) {
+                clickCount = 0;
+                toggleDebugPanel();
+            }
+        });
+    </script>
+</body>
+</html>
